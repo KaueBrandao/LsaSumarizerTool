@@ -2,30 +2,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict
-import nltk
-from nltk.corpus import stopwords
-from nltk.tokenize import sent_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 import re
-import os
 
 app = FastAPI()
 
-# Libera CORS para qualquer origem
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Aceita qualquer origem
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Configura o caminho para os dados do nltk (opcional, mas recomendado na Render)
-nltk.data.path.append(os.path.join(os.path.dirname(__file__), "nltk_data"))
-
-# (Evite usar downloads na Render)
-# nltk.download('stopwords')
-# nltk.download('punkt')
 
 class TextInput(BaseModel):
     text: str
@@ -36,35 +24,39 @@ def preprocess_text(text: str) -> str:
     text = re.sub(r'[^a-záéíóúãõâêîôûç\s]', '', text)
     return text
 
+# Tokenização de frases simples (substitui o sent_tokenize)
+def split_sentences(text: str):
+    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+
+# Stopwords básicas em português
+BASIC_STOPWORDS = set([
+    "a", "o", "e", "é", "de", "do", "da", "em", "um", "uma", "que", "com", "por", "para",
+    "os", "as", "no", "na", "se", "ao", "dos", "das", "ou", "mais", "mas", "como"
+])
+
 @app.post("/summarize")
 def summarize_text(input: TextInput) -> Dict[str, object]:
-    text = preprocess_text(input.text)
-    
-    stop_words = set(stopwords.words('portuguese'))
-    sentences = sent_tokenize(input.text, language='portuguese')
+    sentences = split_sentences(input.text)
     num_sentences = min(input.num_sentences, len(sentences))
-    
-    if not sentences:
-        return {
-            "summary": "",
-            "keywords": []
-        }
 
-    vectorizer = TfidfVectorizer(stop_words=list(stop_words))
+    if not sentences:
+        return {"summary": "", "keywords": []}
+
+    vectorizer = TfidfVectorizer(stop_words=list(BASIC_STOPWORDS))
     tfidf_matrix = vectorizer.fit_transform(sentences)
     feature_names = vectorizer.get_feature_names_out()
-    
+
     sentence_scores = []
     for i in range(len(sentences)):
         scores = tfidf_matrix[i].toarray()[0]
         total_score = sum(scores)
         sentence_scores.append((sentences[i], total_score))
-    
+
     sorted_sentences = sorted(sentence_scores, key=lambda x: x[1], reverse=True)
     selected_sentences = [sentence for sentence, score in sorted_sentences[:num_sentences]]
-    
+
     summary = " ".join(selected_sentences)
-    
+
     word_scores = {word: scores[idx] for idx, word in enumerate(feature_names) if len(word) > 2 and word.isalpha()}
     sorted_words = sorted(word_scores.items(), key=lambda x: x[1], reverse=True)
     keywords = [word for word, score in sorted_words[:5]]
